@@ -590,6 +590,7 @@ public final class MemcachedConnection extends SpyObject {
 		if(placeIn != null) {
             if (locator instanceof VBucketNodeLocator) {
                 int vbucketIndex = ((VBucketNodeLocator) locator).getVBucketIndex(key);
+                // add vbucket to the operation
                 if (o instanceof VBucketAware) {
                     ((VBucketAware) o).setVBucket(vbucketIndex);
                 }
