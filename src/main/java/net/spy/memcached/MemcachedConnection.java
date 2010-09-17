@@ -32,6 +32,7 @@ import net.spy.memcached.ops.KeyedOperation;
 import net.spy.memcached.ops.Operation;
 import net.spy.memcached.ops.OperationException;
 import net.spy.memcached.ops.OperationState;
+import net.spy.memcached.ops.VBucketAware;
 import net.spy.memcached.vbucket.VBucketNodeLocator;
 
 /**
@@ -587,9 +588,11 @@ public final class MemcachedConnection extends SpyObject {
 		assert o.isCancelled() || placeIn != null
 			: "No node found for key " + key;
 		if(placeIn != null) {
-            //ToDo add the vbucketIndex to the operation
             if (locator instanceof VBucketNodeLocator) {
                 int vbucketIndex = ((VBucketNodeLocator) locator).getVBucketIndex(key);
+                if (o instanceof VBucketAware) {
+                    ((VBucketAware) o).setVBucket(vbucketIndex);
+                }
             }
 			addOperation(placeIn, o);
 		} else {

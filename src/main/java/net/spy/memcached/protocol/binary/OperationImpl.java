@@ -255,7 +255,7 @@ abstract class OperationImpl extends BaseOperationImpl {
 		bb.putShort((short)keyBytes.length);
 		bb.put((byte)extraLen);
 		bb.put((byte)0); // data type
-		bb.putShort((short)0); // reserved
+		bb.putShort((short) this.vbucket); // reserved
 		bb.putInt(keyBytes.length + val.length + extraLen);
 		bb.putInt(opaque);
 		bb.putLong(cas);
