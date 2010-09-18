@@ -11,6 +11,9 @@ public class VBucketHttpChunkAggregator {
      * Content length that can not be exceeded.
      */
     private final int maxContentLength;
+    /**
+     * Message buffer
+     */
     private volatile HttpMessage currentMessage;
 
     /**
