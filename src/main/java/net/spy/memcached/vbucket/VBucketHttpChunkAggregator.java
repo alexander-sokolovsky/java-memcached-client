@@ -7,6 +7,9 @@ import org.jboss.netty.handler.codec.http.HttpMessage;
  * @author alexander.sokolovsky.a@gmail.com
  */
 public class VBucketHttpChunkAggregator {
+    /**
+     * Content length that can not be exceeded.
+     */
     private final int maxContentLength;
     private volatile HttpMessage currentMessage;
 
