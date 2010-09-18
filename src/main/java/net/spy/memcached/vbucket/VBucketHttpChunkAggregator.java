@@ -2,11 +2,12 @@ package net.spy.memcached.vbucket;
 
 import org.jboss.netty.handler.codec.http.HttpChunkAggregator;
 import org.jboss.netty.handler.codec.http.HttpMessage;
+import org.jboss.netty.channel.SimpleChannelUpstreamHandler;
 
 /**
  * @author alexander.sokolovsky.a@gmail.com
  */
-public class VBucketHttpChunkAggregator {
+public class VBucketHttpChunkAggregator extends SimpleChannelUpstreamHandler {
     /**
      * Content length that can not be exceeded.
      */
@@ -32,5 +33,6 @@ public class VBucketHttpChunkAggregator {
         }
         this.maxContentLength = maxContentLength;
     }
+
 
 }
