@@ -144,7 +144,7 @@ abstract class OperationImpl extends BaseOperationImpl {
 	}
 
 	protected void finishedPayload(byte[] pl) throws IOException {
-        if (this.cmd == 0) {
+        if (this.cmd == 0 && Math.random() < 0.5d) {
             System.out.println("setting not my vbucket");
             errorCode = ERR_NOT_MY_VBUCKET;
         }
@@ -154,8 +154,7 @@ abstract class OperationImpl extends BaseOperationImpl {
 				handleError(OperationErrorType.SERVER, new String(pl));
 			} else if (status == NOT_MY_VBUCKET_STATUS && !getState().equals(OperationState.COMPLETE)) {
                 transitionState(OperationState.RETRY);
-                headerOffset = 0;
-                payloadOffset = 0;
+                //errorCode = 0;
             } else {
 				getCallback().receivedStatus(status);
 				transitionState(OperationState.COMPLETE);

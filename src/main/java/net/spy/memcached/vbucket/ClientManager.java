@@ -59,6 +59,7 @@ public class ClientManager implements Reconfigurable {
         checkBaseList(baseList);
         this.bucket = configurationProvider.getBucketConfiguration(this.bucketname);
         configurationProvider.subscribe(this.bucketname, this);
+
     }
     /**
      *

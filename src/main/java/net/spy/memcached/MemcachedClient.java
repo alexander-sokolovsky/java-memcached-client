@@ -217,7 +217,7 @@ public class MemcachedClient extends SpyThread
                     .setLocatorType(ConnectionFactoryBuilder.Locator.CONSISTENT);
             
         }
-        //cfb.setOpTimeout(1000000);
+        cfb.setOpTimeout(1000000);
         if (!this.configurationProvider.getAnonymousAuthBucket().equals(bucketName) && usr != null) {
             AuthDescriptor ad = new AuthDescriptor(new String[]{"PLAIN"},
                     new PlainCallbackHandler(usr, pwd));
@@ -258,8 +258,7 @@ public class MemcachedClient extends SpyThread
 
     public void reconfigure(Bucket bucket) {
         this.reconfiguring = true;
-
-        waitForQueues(5L, TimeUnit.SECONDS);
+        this.conn.reconfigure(bucket);
         this.reconfiguring = false;
 
     }

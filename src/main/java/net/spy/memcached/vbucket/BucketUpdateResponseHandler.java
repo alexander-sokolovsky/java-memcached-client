@@ -90,7 +90,6 @@ public class BucketUpdateResponseHandler extends SimpleChannelUpstreamHandler {
                     finerLog("HEADER: " + name + " = " + value);
                 }
             }
-            //System.out.println();
             finerLog(System.getProperty("line.separator"));
         }
 

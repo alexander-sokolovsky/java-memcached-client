@@ -37,15 +37,8 @@ public class VBucketNodeLocator implements NodeLocator {
      */
     public VBucketNodeLocator(List<MemcachedNode> nodes, Config jsonConfig) {
         super();
-        Map<String, MemcachedNode> nodesMap = new HashMap<String, MemcachedNode>();
-        for (MemcachedNode node : nodes) {
-            InetSocketAddress addr = (InetSocketAddress) node.getSocketAddress();
-            String address = addr.getAddress().getHostAddress() + ":" + addr.getPort();
-            nodesMap.put(address, node);
-        }
-
-        this.nodesMap = nodesMap;
-        this.config = jsonConfig;
+        setNodes(nodes);
+        setConfig(jsonConfig);
     }
 
 
@@ -68,13 +61,25 @@ public class VBucketNodeLocator implements NodeLocator {
     public NodeLocator getReadonlyCopy() {
         return this;
     }
-    public Config reconfigure(final Config config) {
-        Config old = this.config;
-        this.config = config;
-        return old;
+    public void updateLocator(final List<MemcachedNode> nodes, final Config config) {
+        setNodes(nodes);
+        setConfig(config);
     }
 
     public int getVBucketIndex(String key) {
         return config.getVbucketByKey(key);
+    }
+    private void setNodes(Collection<MemcachedNode> nodes) {
+        Map<String, MemcachedNode> nodesMap = new HashMap<String, MemcachedNode>();
+        for (MemcachedNode node : nodes) {
+            InetSocketAddress addr = (InetSocketAddress) node.getSocketAddress();
+            String address = addr.getAddress().getHostAddress() + ":" + addr.getPort();
+            nodesMap.put(address, node);
+        }
+
+        this.nodesMap = nodesMap;
+    }
+    private void setConfig(final Config config) {
+        this.config = config;
     }
 }

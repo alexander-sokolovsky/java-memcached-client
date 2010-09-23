@@ -23,6 +23,7 @@ import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.Collections;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 
@@ -36,6 +37,7 @@ import net.spy.memcached.ops.VBucketAware;
 import net.spy.memcached.vbucket.VBucketNodeLocator;
 import net.spy.memcached.vbucket.Reconfigurable;
 import net.spy.memcached.vbucket.config.Bucket;
+import org.apache.commons.lang.StringUtils;
 
 /**
  * Connection to a cluster of memcached servers.
@@ -60,6 +62,8 @@ public final class MemcachedConnection extends SpyObject implements Reconfigurab
 	// maximum amount of time to wait between reconnect attempts
 	private final long maxDelay;
 	private int emptySelects=0;
+    private final int bufSize;
+    private final ConnectionFactory connectionFactory;
 	// AddedQueue is used to track the QueueAttachments for which operations
 	// have recently been queued.
 	private final ConcurrentLinkedQueue<MemcachedNode> addedQueue;
@@ -71,7 +75,8 @@ public final class MemcachedConnection extends SpyObject implements Reconfigurab
 		new ConcurrentLinkedQueue<ConnectionObserver>();
 	private final OperationFactory opFact;
 	private final int timeoutExceptionThreshold;
-    private final ConcurrentLinkedQueue<Operation> rescheduledOps;
+    private final Collection<Operation> retryOps;
+    private final ConcurrentLinkedQueue<MemcachedNode> nodesToShutdown;
 
 	/**
 	 * Construct a memcached connection.
@@ -89,45 +94,111 @@ public final class MemcachedConnection extends SpyObject implements Reconfigurab
 		connObservers.addAll(obs);
 		reconnectQueue=new TreeMap<Long, MemcachedNode>();
 		addedQueue=new ConcurrentLinkedQueue<MemcachedNode>();
-        rescheduledOps = new ConcurrentLinkedQueue<Operation>();
 		failureMode = fm;
 		shouldOptimize = f.shouldOptimize();
 		maxDelay = f.getMaxReconnectDelay();
 		opFact = opfactory;
 		timeoutExceptionThreshold = f.getTimeoutExceptionThreshold();
 		selector=Selector.open();
-		List<MemcachedNode> connections=new ArrayList<MemcachedNode>(a.size());
-		for(SocketAddress sa : a) {
-			SocketChannel ch=SocketChannel.open();
-			ch.configureBlocking(false);
-			MemcachedNode qa=f.createMemcachedNode(sa, ch, bufSize);
-			int ops=0;
-			ch.socket().setTcpNoDelay(!f.useNagleAlgorithm());
-			// Initially I had attempted to skirt this by queueing every
-			// connect, but it considerably slowed down start time.
-			try {
-				if(ch.connect(sa)) {
-					getLogger().info("Connected to %s immediately", qa);
-					connected(qa);
-				} else {
-					getLogger().info("Added %s to connect queue", qa);
-					ops=SelectionKey.OP_CONNECT;
-				}
-				qa.setSk(ch.register(selector, ops, qa));
-				assert ch.isConnected()
-					|| qa.getSk().interestOps() == SelectionKey.OP_CONNECT
-					: "Not connected, and not wanting to connect";
-			} catch(SocketException e) {
-				getLogger().warn("Socket error on initial connect", e);
-				queueReconnect(qa);
-			}
-			connections.add(qa);
-		}
-		locator=f.createLocator(connections);
+        retryOps = new ArrayList<Operation>();
+        nodesToShutdown = new ConcurrentLinkedQueue<MemcachedNode>();
+        this.bufSize = bufSize;
+        this.connectionFactory = f;
+        List<MemcachedNode> connections = createConnections(a);
+        locator=f.createLocator(connections);
 	}
+    private List<MemcachedNode> createConnections(final Collection<InetSocketAddress> a)
+        throws IOException {
+        List<MemcachedNode> connections=new ArrayList<MemcachedNode>(a.size());
+        for(SocketAddress sa : a) {
+            SocketChannel ch=SocketChannel.open();
+            ch.configureBlocking(false);
+            MemcachedNode qa=this.connectionFactory.createMemcachedNode(sa, ch, bufSize);
+            int ops=0;
+            ch.socket().setTcpNoDelay(!this.connectionFactory.useNagleAlgorithm());
+            // Initially I had attempted to skirt this by queueing every
+            // connect, but it considerably slowed down start time.
+            try {
+                if(ch.connect(sa)) {
+                    getLogger().info("Connected to %s immediately", qa);
+                    connected(qa);
+                } else {
+                    getLogger().info("Added %s to connect queue", qa);
+                    ops=SelectionKey.OP_CONNECT;
+                }
+                qa.setSk(ch.register(selector, ops, qa));
+                assert ch.isConnected()
+                    || qa.getSk().interestOps() == SelectionKey.OP_CONNECT
+                    : "Not connected, and not wanting to connect";
+            } catch(SocketException e) {
+                getLogger().warn("Socket error on initial connect", e);
+                queueReconnect(qa);
+            }
+            connections.add(qa);
+        }
+        return connections;
+    }
 
     public void reconfigure(Bucket bucket) {
-        //this.locator.reconfigure(newNodes, bucket)
+        try {
+            if (!(this.locator instanceof VBucketNodeLocator)) {
+                return;
+            }
+
+            // get a new collection of addresses from the received config
+            List<String> servers = bucket.getVbuckets().getServers();
+            Collection<SocketAddress> newServerAddresses = new HashSet<SocketAddress>();
+            List<InetSocketAddress> newServers = new ArrayList<InetSocketAddress>();
+            for (String server : servers) {
+                int finalColon = server.lastIndexOf(':');
+                if (finalColon < 1) {
+                    throw new IllegalArgumentException("Invalid server ``"
+                            + server + "'' in vbucket's server list");
+
+                }
+                String hostPart = server.substring(0, finalColon);
+                String portNum = server.substring(finalColon + 1);
+
+                InetSocketAddress address = new InetSocketAddress(hostPart,
+                        Integer.parseInt(portNum));
+                // add parsed address to our collections
+                newServerAddresses.add(address);
+                newServers.add(address);
+
+            }
+
+            // split current nodes to "odd nodes" and "stay nodes"
+            Collection<MemcachedNode> oddNodes = new ArrayList<MemcachedNode>();
+            Collection<MemcachedNode> stayNodes = new ArrayList<MemcachedNode>();
+            Collection<InetSocketAddress> stayServers = new ArrayList<InetSocketAddress>();
+            for (MemcachedNode current : this.locator.getAll()) {
+                if (newServerAddresses.contains(current.getSocketAddress())) {
+                    stayNodes.add(current);
+                    stayServers.add((InetSocketAddress) current.getSocketAddress());
+                } else {
+                    oddNodes.add(current);
+                }
+            }
+
+            // prepare a collection of addresses for new nodes
+            newServers.removeAll(stayServers);
+
+            // create a collection of new nodes
+            List<MemcachedNode> newNodes = createConnections(newServers);
+
+            // merge stay nodes with new nodes
+            List<MemcachedNode> mergedNodes = new ArrayList<MemcachedNode>();
+            mergedNodes.addAll(stayNodes);
+            mergedNodes.addAll(newNodes);
+
+            // call update locator with new nodes list and vbucket config
+            ((VBucketNodeLocator) this.locator).updateLocator(mergedNodes, bucket.getVbuckets());
+
+            // schedule shutdown for the oddNodes
+            nodesToShutdown.addAll(oddNodes);
+        } catch (IOException e) {
+            getLogger().error("Connection reconfiguration failed", e);
+        }
     }
 
     private boolean selectorsMakeSense() {
@@ -166,17 +237,8 @@ public final class MemcachedConnection extends SpyObject implements Reconfigurab
 		if(shutDown) {
 			throw new IOException("No IO while shut down");
 		}
-        System.out.println("handleIO");
 		// Deal with all of the stuff that's been added, but may not be marked
 		// writable.
-        for (Operation op : rescheduledOps) {
-            if (op instanceof KeyedOperation) {
-                KeyedOperation keyedOp = (KeyedOperation) op;
-                String key = keyedOp.getKeys().iterator().next();
-                addOperation(key, op);
-            }
-        }
-        rescheduledOps.clear();
 		handleInputQueue();
 		getLogger().debug("Done dealing with queue.");
 
@@ -234,6 +296,28 @@ public final class MemcachedConnection extends SpyObject implements Reconfigurab
 		if(!shutDown && !reconnectQueue.isEmpty()) {
 			attemptReconnects();
 		}
+        // rehash operations that in retry state
+        redistributeOperations(retryOps);
+        retryOps.clear();
+
+        // try to shutdown odd nodes
+        for (MemcachedNode qa : nodesToShutdown) {
+            if (!addedQueue.contains(qa)) {
+                nodesToShutdown.remove(qa);
+                Collection<Operation> notCompletedOperations = qa.destroyInputQueue();
+                if (qa.getChannel() != null) {
+                    qa.getChannel().close();
+                    qa.setSk(null);
+                    if (qa.getBytesRemainingToWrite() > 0) {
+                        getLogger().warn(
+                                "Shut down with %d bytes remaining to write",
+                                qa.getBytesRemainingToWrite());
+                    }
+                    getLogger().debug("Shut down channel %s", qa.getChannel());
+                }
+                redistributeOperations(notCompletedOperations);
+            }
+        }
 	}
 
 	// Handle any requests that have been made against the client.
@@ -319,7 +403,6 @@ public final class MemcachedConnection extends SpyObject implements Reconfigurab
 	// Handle IO for a specific selector.  Any IOException will cause a
 	// reconnect
 	private void handleIO(SelectionKey sk) {
-        System.out.println("handlerIO(sk)");
 		MemcachedNode qa=(MemcachedNode)sk.attachment();
 		try {
 			getLogger().debug(
@@ -392,7 +475,6 @@ public final class MemcachedConnection extends SpyObject implements Reconfigurab
 
 	private void handleReads(SelectionKey sk, MemcachedNode qa)
 		throws IOException {
-        System.out.println("handleReads(sk, qa)");
 		Operation currentOp = qa.getCurrentReadOp();
 		ByteBuffer rbuf=qa.getRbuf();
 		final SocketChannel channel = qa.getChannel();
@@ -422,11 +504,10 @@ public final class MemcachedConnection extends SpyObject implements Reconfigurab
                     getLogger().debug(
                             "Reschedule read op due to NOT_MY_VBUCKET error: %s ",
                             currentOp);
-                    System.out.println("Reschedule read op due to NOT_MY_VBUCKET error");
                     Operation op=qa.removeCurrentReadOp();
                     assert op == currentOp
                     : "Expected to pop " + currentOp + " got " + op;
-                    rescheduledOps.offer(currentOp);
+                    retryOps.add(currentOp);
                     currentOp=qa.getCurrentReadOp();
 
                 }
