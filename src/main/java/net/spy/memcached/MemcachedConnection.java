@@ -34,11 +34,13 @@ import net.spy.memcached.ops.OperationException;
 import net.spy.memcached.ops.OperationState;
 import net.spy.memcached.ops.VBucketAware;
 import net.spy.memcached.vbucket.VBucketNodeLocator;
+import net.spy.memcached.vbucket.Reconfigurable;
+import net.spy.memcached.vbucket.config.Bucket;
 
 /**
  * Connection to a cluster of memcached servers.
  */
-public final class MemcachedConnection extends SpyObject {
+public final class MemcachedConnection extends SpyObject implements Reconfigurable {
 
 	// The number of empty selects we'll allow before assuming we may have
 	// missed one and should check the current selectors.  This generally
@@ -69,6 +71,7 @@ public final class MemcachedConnection extends SpyObject {
 		new ConcurrentLinkedQueue<ConnectionObserver>();
 	private final OperationFactory opFact;
 	private final int timeoutExceptionThreshold;
+    private final ConcurrentLinkedQueue<Operation> rescheduledOps;
 
 	/**
 	 * Construct a memcached connection.
@@ -86,6 +89,7 @@ public final class MemcachedConnection extends SpyObject {
 		connObservers.addAll(obs);
 		reconnectQueue=new TreeMap<Long, MemcachedNode>();
 		addedQueue=new ConcurrentLinkedQueue<MemcachedNode>();
+        rescheduledOps = new ConcurrentLinkedQueue<Operation>();
 		failureMode = fm;
 		shouldOptimize = f.shouldOptimize();
 		maxDelay = f.getMaxReconnectDelay();
@@ -122,7 +126,11 @@ public final class MemcachedConnection extends SpyObject {
 		locator=f.createLocator(connections);
 	}
 
-	private boolean selectorsMakeSense() {
+    public void reconfigure(Bucket bucket) {
+        //this.locator.reconfigure(newNodes, bucket)
+    }
+
+    private boolean selectorsMakeSense() {
 		for(MemcachedNode qa : locator.getAll()) {
 			if(qa.getSk() != null && qa.getSk().isValid()) {
 				if(qa.getChannel().isConnected()) {
@@ -158,9 +166,17 @@ public final class MemcachedConnection extends SpyObject {
 		if(shutDown) {
 			throw new IOException("No IO while shut down");
 		}
-
+        System.out.println("handleIO");
 		// Deal with all of the stuff that's been added, but may not be marked
 		// writable.
+        for (Operation op : rescheduledOps) {
+            if (op instanceof KeyedOperation) {
+                KeyedOperation keyedOp = (KeyedOperation) op;
+                String key = keyedOp.getKeys().iterator().next();
+                addOperation(key, op);
+            }
+        }
+        rescheduledOps.clear();
 		handleInputQueue();
 		getLogger().debug("Done dealing with queue.");
 
@@ -303,6 +319,7 @@ public final class MemcachedConnection extends SpyObject {
 	// Handle IO for a specific selector.  Any IOException will cause a
 	// reconnect
 	private void handleIO(SelectionKey sk) {
+        System.out.println("handlerIO(sk)");
 		MemcachedNode qa=(MemcachedNode)sk.attachment();
 		try {
 			getLogger().debug(
@@ -375,6 +392,7 @@ public final class MemcachedConnection extends SpyObject {
 
 	private void handleReads(SelectionKey sk, MemcachedNode qa)
 		throws IOException {
+        System.out.println("handleReads(sk, qa)");
 		Operation currentOp = qa.getCurrentReadOp();
 		ByteBuffer rbuf=qa.getRbuf();
 		final SocketChannel channel = qa.getChannel();
@@ -400,7 +418,18 @@ public final class MemcachedConnection extends SpyObject {
 					assert op == currentOp
 					: "Expected to pop " + currentOp + " got " + op;
 					currentOp=qa.getCurrentReadOp();
-				}
+				} else if (currentOp.getState() == OperationState.RETRY) {
+                    getLogger().debug(
+                            "Reschedule read op due to NOT_MY_VBUCKET error: %s ",
+                            currentOp);
+                    System.out.println("Reschedule read op due to NOT_MY_VBUCKET error");
+                    Operation op=qa.removeCurrentReadOp();
+                    assert op == currentOp
+                    : "Expected to pop " + currentOp + " got " + op;
+                    rescheduledOps.offer(currentOp);
+                    currentOp=qa.getCurrentReadOp();
+
+                }
 			}
 			rbuf.clear();
 			read=channel.read(rbuf);

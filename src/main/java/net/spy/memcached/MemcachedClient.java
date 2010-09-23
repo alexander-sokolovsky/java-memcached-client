@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import net.spy.memcached.auth.AuthDescriptor;
 import net.spy.memcached.auth.AuthThreadMonitor;
+import net.spy.memcached.auth.PlainCallbackHandler;
 import net.spy.memcached.compat.SpyThread;
 import net.spy.memcached.internal.BulkFuture;
 import net.spy.memcached.internal.BulkGetFuture;
@@ -192,15 +193,36 @@ public class MemcachedClient extends SpyThread
 
     public MemcachedClient(final List<URI> baseList,
                            final String bucketName,
-                           final String usr, final String pwd) throws IOException, ConfigurationException {
+                           final String usr, final String pwd,
+                           final boolean isVBucketAware) throws IOException, ConfigurationException {
+        for (URI bu : baseList) {
+            if (!bu.isAbsolute()) {
+                throw new IllegalArgumentException("The base URI must be absolute");
+            }
+        }
+
         this.configurationProvider = new ConfigurationProviderHTTP(baseList, usr, pwd);
         Bucket bucket = this.configurationProvider.getBucketConfiguration(bucketName);
         ConnectionFactoryBuilder cfb = new ConnectionFactoryBuilder();
-        cfb.setFailureMode(FailureMode.Retry)
-                .setProtocol(ConnectionFactoryBuilder.Protocol.BINARY)
-                .setHashAlg(HashAlgorithm.KETAMA_HASH)
-                .setLocatorType(ConnectionFactoryBuilder.Locator.VBUCKET)
-                .setVBucketConfig(bucket.getVbuckets());
+        if (isVBucketAware) {
+            cfb.setFailureMode(FailureMode.Retry)
+                    .setProtocol(ConnectionFactoryBuilder.Protocol.BINARY)
+                    .setHashAlg(HashAlgorithm.KETAMA_HASH)
+                    .setLocatorType(ConnectionFactoryBuilder.Locator.VBUCKET)
+                    .setVBucketConfig(bucket.getVbuckets());
+        } else {
+            cfb.setFailureMode(FailureMode.Retry)
+                    .setProtocol(ConnectionFactoryBuilder.Protocol.BINARY)
+                    .setHashAlg(HashAlgorithm.KETAMA_HASH)
+                    .setLocatorType(ConnectionFactoryBuilder.Locator.CONSISTENT);
+            
+        }
+        //cfb.setOpTimeout(1000000);
+        if (!this.configurationProvider.getAnonymousAuthBucket().equals(bucketName) && usr != null) {
+            AuthDescriptor ad = new AuthDescriptor(new String[]{"PLAIN"},
+                    new PlainCallbackHandler(usr, pwd));
+            cfb.setAuthDescriptor(ad);
+        }
         ConnectionFactory cf = cfb.build();
         List<InetSocketAddress> addrs = AddrUtil.getAddresses(StringUtils.join(bucket.getVbuckets().getServers(), ','));
         if(cf == null) {
@@ -235,13 +257,11 @@ public class MemcachedClient extends SpyThread
     }
 
     public void reconfigure(Bucket bucket) {
-/*
         this.reconfiguring = true;
-        Config old = ((VBucketNodeLocator) this.getNodeLocator()).reconfigure(config);
-        ConfigDifference difference = old.compareTo(config);
 
+        waitForQueues(5L, TimeUnit.SECONDS);
         this.reconfiguring = false;
-*/
+
     }
 
     /**

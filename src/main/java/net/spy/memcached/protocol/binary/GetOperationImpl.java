@@ -52,7 +52,7 @@ class GetOperationImpl extends OperationImpl
 
 	@Override
 	protected OperationStatus getStatusForErrorCode(int errCode, byte[] errPl) {
-		return errCode == ERR_NOT_FOUND ? NOT_FOUND_STATUS : null;
+		return errCode == ERR_NOT_FOUND ? NOT_FOUND_STATUS : super.getStatusForErrorCode(errCode,  errPl);
 	}
 
 	public Collection<String> getKeys() {
