@@ -144,24 +144,23 @@ public class ConfigurationProviderHTTP implements ConfigurationProvider {
 
         Bucket bucket = getBucketConfiguration(bucketName);
 
-        Observer obs = new Observer() {
-            public void update(Observable o, Object arg) {
-                rec.reconfigure((Bucket) arg);
-            }
-        };
+        ReconfigurableObserver obs = new ReconfigurableObserver(rec);
         BucketMonitor monitor = this.monitors.get(bucketName);
         if (monitor == null) {
             URI streamingURI = bucket.getStreamingURI();
             monitor = new BucketMonitor(this.loadedBaseUri.resolve(streamingURI), bucketName, this.restUsr, this.restPwd, configurationParser);
             this.monitors.put(bucketName, monitor);
+            monitor.addObserver(obs);
+            monitor.startMonitor();
+        } else {
+            monitor.addObserver(obs);
         }
-        monitor.addObserver(obs);
     }
 
-    public void unsubscribe(String vbucketName, Observer o) {
+    public void unsubscribe(String vbucketName, Reconfigurable rec) {
         BucketMonitor monitor = this.monitors.get(vbucketName);
         if (monitor != null) {
-            monitor.deleteObserver(o);
+            monitor.deleteObserver(new ReconfigurableObserver(rec));
         }
     }
 

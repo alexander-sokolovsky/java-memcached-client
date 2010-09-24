@@ -182,7 +182,7 @@ public class BucketUpdateResponseHandler extends SimpleChannelUpstreamHandler {
      */
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, ExceptionEvent e) throws Exception {
-        LOGGER.log(Level.INFO, "Exception occurred: ", e);
+        LOGGER.log(Level.INFO, "Exception occurred: ");
         if (monitor != null) {
             monitor.invalidate();
         }

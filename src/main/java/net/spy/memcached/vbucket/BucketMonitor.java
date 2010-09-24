@@ -83,6 +83,14 @@ public class BucketMonitor extends Observable {
         this.host = cometStreamURI.getHost();
         this.port = cometStreamURI.getPort() == -1 ? 80 : cometStreamURI.getPort();
         factory = new NioClientSocketChannelFactory(Executors.newCachedThreadPool(), Executors.newCachedThreadPool());
+    }
+    
+    public void startMonitor() {
+        if (channel != null) {
+            Logger.getLogger(BucketMonitor.class.getName()).log(Level.WARNING,
+                    "Bucket monitor is already started.");
+            return;
+        }
         createChannel();
         this.handler = channel.getPipeline().get(BucketUpdateResponseHandler.class);
         handler.setBucketMonitor(this);
