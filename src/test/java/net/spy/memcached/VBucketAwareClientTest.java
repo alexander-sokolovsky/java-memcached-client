@@ -20,6 +20,7 @@ public class VBucketAwareClientTest extends TestCase {
         Future<Object> getH12 = mc.asyncGet("h12");
         Object valueH12 = getH12.get();
         assertNotNull(valueH12);
+        assertNotNull(valueH12);
     }
 
 }
