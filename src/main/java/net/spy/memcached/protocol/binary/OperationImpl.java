@@ -169,6 +169,7 @@ abstract class OperationImpl extends BaseOperationImpl {
 	 */
 	protected OperationStatus getStatusForErrorCode(int errCode, byte[] errPl) {
         if (errCode == ERR_NOT_MY_VBUCKET) {
+            getLogger().warn("Not_my_vbucket on operation " + this);
             return NOT_MY_VBUCKET_STATUS;
         }
 		return null;

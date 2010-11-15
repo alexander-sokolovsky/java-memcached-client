@@ -149,6 +149,11 @@ public abstract class BaseOperationImpl extends SpyObject {
     public void setVBucket(int vbucket) {
         this.vbucket = vbucket;
     }
+
+    public int getVbucket() {
+        return vbucket;
+    }
+
     public Collection<MemcachedNode> getNotMyVbucketNodes() {
         return notMyVbucketNodes;
     }
